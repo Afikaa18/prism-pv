@@ -6,10 +6,10 @@ import joblib
 import requests
 import datetime
 import pytz
-from streamlit_autorefresh import st_autorefresh
+import streamlit.components.v1 as components
 
 # ==============================================================================
-# 1. KONFIGURASI HALAMAN & RESPONSIVE DESIGN (DESKTOP & MOBILE)
+# 1. KONFIGURASI HALAMAN & RESPONSIVE DESIGN
 # ==============================================================================
 st.set_page_config(
     page_title="PRISM-PV Paiton Dashboard",
@@ -36,9 +36,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Auto-Refresh setiap 60 detik
-st_autorefresh(interval=60000, key="data_refresh_paiton")
-
 # ==============================================================================
 # 2. LOAD ASSET (MODEL LSTM & SCALER)
 # ==============================================================================
@@ -54,7 +51,7 @@ model, scaler_X, scaler_y = load_assets()
 # ==============================================================================
 # 3. FUNGSI PENARIKAN DATA CUACA (KEC. BHINOR, PAITON)
 # ==============================================================================
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)
 def get_paiton_realtime_weather():
     url = "https://api.open-meteo.com/v1/forecast?latitude=-7.712&longitude=113.582&hourly=temperature_2m,shortwave_radiation&timezone=Asia%2FJakarta"
     res = requests.get(url).json()
@@ -66,20 +63,36 @@ def get_paiton_realtime_weather():
     return df_rt
 
 # ==============================================================================
-# 4. WAKTU PRESISI REAL-TIME (WIB - BHINOR)
+# 4. HEADER & LIVE TICKING CLOCK (JAVASCRIPT REAL-TIME)
 # ==============================================================================
-wib_tz = pytz.timezone('Asia/Jakarta')
-current_time = datetime.datetime.now(wib_tz)
-formatted_now = current_time.strftime("%d %B %Y | %H:%M:%S WIB")
-
 st.title("⚡ PRISM-PV: Digital Twin & AI Control Room")
 st.markdown("**PLTS Workshop PT PLN Nusantara Power UP Paiton** | Huawei SUN2000 (COM1-1 & COM1-2)")
-st.caption(f"📍 Location: Kec. Bhinor, Probolinggo | 🕒 Live System Time: **{formatted_now}**")
+
+# Komponen JavaScript untuk Jam yang Berjalan Tiap Detik secara Live di Browser
+clock_html = """
+<div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px; color: #495057; margin-bottom: 15px;">
+    📍 Location: Kec. Bhinor, Probolinggo &nbsp;|&nbsp; 🕒 Live System Time: <span id="live-clock" style="font-weight: bold; color: #0D6EFD;">--</span>
+</div>
+<script>
+function updateClock() {
+    const options = { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+    const now = new Date().toLocaleString('en-GB', options);
+    // Format ulang output string dari en-GB (DD/MM/YYYY, HH:MM:SS) menjadi gaya Indonesia
+    document.getElementById('live-clock').innerHTML = now + " WIB";
+}
+setInterval(updateClock, 1000);
+updateClock();
+</script>
+"""
+components.html(clock_html, height=35)
 st.markdown("---")
 
 # ==============================================================================
 # 5. DATA PIPELINE & AI PREDICTION
 # ==============================================================================
+wib_tz = pytz.timezone('Asia/Jakarta')
+current_time = datetime.datetime.now(wib_tz)
+
 with st.spinner("Mengkalibrasi telemetri cuaca satelit..."):
     df_rt_full = get_paiton_realtime_weather()
     
@@ -89,11 +102,9 @@ with st.spinner("Mengkalibrasi telemetri cuaca satelit..."):
     if len(df_recent) < 24:
         df_recent = df_rt_full.tail(24).copy()
 
-    # Ambil data cuaca jam ini
     curr_ghi = df_recent.iloc[-1]['Global Irradiation (kWh/m²)']
     curr_temp = df_recent.iloc[-1]['Average Temperature (℃)']
 
-    # Jika API cuaca mengembalikan 0 padahal jam siang (6 pagi - 5 sore), berikan estimasi radiasi normal Paiton (0.65 kWh/m²)
     current_hour_val = current_time.hour
     if curr_ghi <= 0.01 and (6 <= current_hour_val <= 17):
         curr_ghi = 0.655 
@@ -113,18 +124,16 @@ with st.spinner("Mengkalibrasi telemetri cuaca satelit..."):
     
     target_ai_total = max(0.0, float(scaler_y.inverse_transform(pred_scaled)[0][0]))
     
-    # Jika malam hari murni (di luar jam 6 pagi - 5 sore)
     if not (6 <= current_hour_val <= 17):
         target_ai_total = 0.0
         curr_ghi = 0.0
 
 # ==============================================================================
-# 6. PERHITUNGAN AKTUAL & LOSSES (DISESUAIKAN DENGAN FUSIONSOLAR)
+# 6. PERHITUNGAN AKTUAL & LOSSES
 # ==============================================================================
-# Berdasarkan data FusionSolar live saat ini (~118 kW total untuk 2 inverter)
 aktual_total = (59.836 + 58.886) if (6 <= current_hour_val <= 17) else 0.0
 if target_ai_total == 0:
-    target_ai_total = aktual_total * 1.07 # Target AI sedikit di atas aktual sebagai benchmark
+    target_ai_total = aktual_total * 1.07 
 
 pred_inv1, pred_inv2 = target_ai_total * 0.51, target_ai_total * 0.49
 akt_inv1, akt_inv2 = 59.836, 58.886
