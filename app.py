@@ -14,7 +14,6 @@ import random
 # ==============================================================================
 st.set_page_config(
     page_title="PRISM-PV Paiton Dashboard",
-    page_icon="⚡",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -52,7 +51,7 @@ model, scaler_X, scaler_y = load_assets()
 # ==============================================================================
 # 3. HEADER & LIVE TICKING CLOCK (JAVASCRIPT)
 # ==============================================================================
-st.title("⚡ PRISM-PV: Digital Twin & AI Control Room")
+st.title("PRISM-PV: Digital Twin & AI Control Room")
 st.markdown("**PLTS Workshop PT PLN Nusantara Power UP Paiton** | Huawei SUN2000 (COM1-1 & COM1-2)")
 
 clock_html = """
@@ -124,18 +123,18 @@ c4.metric("Status Operasi", "AKTIF & GENERATING" if is_active_hours else "STANDB
 
 st.markdown("---")
 
-st.subheader("⚡ Monitoring Dual Inverter Huawei (AI vs FusionSolar)")
+st.subheader(" Monitoring Dual Inverter Huawei (AI vs FusionSolar)")
 col_inv1, col_inv2 = st.columns(2)
 
 with col_inv1:
-    st.markdown("##### 🔌 Inverter 1 (COM1-1)")
+    st.markdown("Inverter 1 (COM1-1)")
     st.metric("Target AI (P_pred)", f"{pred_inv1:.3f} kW")
     st.metric("Aktual FusionSolar", f"{akt_inv1:.3f} kW")
     ef_1 = (akt_inv1 / pred_inv1 * 100) if pred_inv1 > 0 else 0.0
     st.caption(f"Efisiensi Operasional: {ef_1:.1f}%")
 
 with col_inv2:
-    st.markdown("##### 🔌 Inverter 2 (COM1-2)")
+    st.markdown("Inverter 2 (COM1-2)")
     st.metric("Target AI (P_pred)", f"{pred_inv2:.3f} kW")
     st.metric("Aktual FusionSolar", f"{akt_inv2:.3f} kW")
     ef_2 = (akt_inv2 / pred_inv2 * 100) if pred_inv2 > 0 else 0.0
@@ -143,7 +142,7 @@ with col_inv2:
 
 st.markdown("---")
 
-st.subheader("📊 Diagnostik Kehilangan Daya & Finansial Real-Time")
+st.subheader("Diagnostik Kehilangan Daya & Finansial Real-Time")
 f1, f2, f3 = st.columns(3)
 with f1:
     st.metric("Total Daya Aktual (kW)", f"{akt_total_kw:.3f} kW")
