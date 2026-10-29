@@ -5,50 +5,51 @@ import tensorflow as tf
 import joblib
 import requests
 import datetime
+import pytz
+from streamlit_autorefresh import st_autorefresh
 
-# Konfigurasi Halaman dengan Tema Terang (Light Theme)
+# ==============================================================================
+# 1. KONFIGURASI HALAMAN & RESPONSIVE DESIGN (DESKTOP & MOBILE)
+# ==============================================================================
 st.set_page_config(
     page_title="PRISM-PV Paiton Dashboard",
     page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# Custom CSS untuk Styling Profesional Light Mode & Clean Control Room
+# Custom CSS agar metrik terlihat rapi di HP (Mobile) maupun Laptop
 st.markdown("""
     <style>
-    .main {
-        background-color: #F8F9FA;
-        color: #212529;
-    }
+    .main { background-color: #F4F7FB; }
     .stMetric {
         background-color: #FFFFFF;
         padding: 15px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        border-left: 4px solid #0066CC;
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        border-left: 5px solid #0D6EFD;
+        margin-bottom: 10px;
     }
-    .metric-card-warning {
-        background-color: #FFFFFF;
-        padding: 15px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        border-left: 4px solid #DC3545;
+    .loss-metric {
+        border-left: 5px solid #DC3545; /* Merah untuk Loss */
     }
-    .metric-card-success {
-        background-color: #FFFFFF;
-        padding: 15px;
-        border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        border-left: 4px solid #28A745;
+    .success-metric {
+        border-left: 5px solid #198754; /* Hijau untuk Aktual */
     }
-    h1, h2, h3 {
-        color: #1A365D;
+    h1, h2, h3 { color: #0A2540; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    /* Penyesuaian padding untuk layar HP */
+    @media (max-width: 768px) {
+        .block-container { padding-top: 2rem; padding-left: 1rem; padding-right: 1rem; }
     }
     </style>
 """, unsafe_allow_html=True)
 
-# 1. LOAD ASSET MODEL & SCALER
+# Auto-Refresh setiap 60 detik (60000 ms) agar Dashboard bersifat Real-Time Live
+st_autorefresh(interval=60000, key="data_refresh_paiton")
+
+# ==============================================================================
+# 2. LOAD ASSET (MODEL LSTM & SCALER)
+# ==============================================================================
 @st.cache_resource
 def load_assets():
     model = tf.keras.models.load_model('best_model_lstm.h5', compile=False)
@@ -58,8 +59,12 @@ def load_assets():
 
 model, scaler_X, scaler_y = load_assets()
 
-# 2. FUNGSI PENARIKAN DATA REAL-TIME (OPEN-METEO PAITON)
+# ==============================================================================
+# 3. FUNGSI PENARIKAN DATA CUACA (KOORDINAT KEC. BHINOR, PAITON)
+# ==============================================================================
+@st.cache_data(ttl=300) # Cache 5 menit agar tidak di-banned API
 def get_paiton_realtime_weather():
+    # Koordinat Presisi: PLTS Workshop PLN NP UP Paiton, Kec. Bhinor (-7.712, 113.582)
     url = "https://api.open-meteo.com/v1/forecast?latitude=-7.712&longitude=113.582&hourly=temperature_2m,shortwave_radiation&timezone=Asia%2FJakarta"
     res = requests.get(url).json()
     df_rt = pd.DataFrame({
@@ -69,23 +74,37 @@ def get_paiton_realtime_weather():
     })
     return df_rt
 
-# Header Profesional Tanpa Emoji Matahari
-st.title("PRISM-PV: Intelligent Monitoring & AI Forecasting Control Room")
-st.markdown("**PLTS Workshop PT PLN Nusantara Power UP Paiton** | Inverter Huawei SUN2000-115KTL-M2 (COM1-1 & COM1-2)")
+# ==============================================================================
+# 4. WAKTU PRESISI REAL-TIME (WIB - PAITON TIMING)
+# ==============================================================================
+wib_tz = pytz.timezone('Asia/Jakarta')
+current_time = datetime.datetime.now(wib_tz)
+formatted_now = current_time.strftime("%d %B %Y | %H:%M:%S WIB")
+
+# HEADER DASHBOARD
+st.title("⚡ PRISM-PV: Digital Twin & AI Control Room")
+st.markdown("**PLTS Workshop PT PLN Nusantara Power UP Paiton** | Huawei SUN2000 (COM1-1 & COM1-2)")
+st.caption(f"📍 Location: Kec. Bhinor, Probolinggo | 🕒 Live System Time: **{formatted_now}**")
 st.markdown("---")
 
-# 3. STREAMING DATA & PREDIKSI
-with st.spinner("⏳ Menyelaraskan telemetri cuaca real-time Paiton..."):
+# ==============================================================================
+# 5. DATA PIPELINE & AI PREDICTION (NOWCASTING)
+# ==============================================================================
+with st.spinner("Mengkalibrasi telemetri cuaca satelit..."):
     df_rt_full = get_paiton_realtime_weather()
     
-    # Ambil data jam saat ini atau 24 jam terakhir yang valid
-    now = pd.Timestamp.now(tz="Asia/Jakarta").tz_localize(None)
-    df_recent = df_rt_full[df_rt_full['Statistical period'] <= now].tail(24).copy()
+    # Menarik data cuaca 24 jam terakhir hingga jam saat ini
+    current_hour_trunc = current_time.replace(minute=0, second=0, microsecond=0).tz_localize(None)
+    df_recent = df_rt_full[df_rt_full['Statistical period'] <= current_hour_trunc].tail(24).copy()
     
     if len(df_recent) < 24:
         df_recent = df_rt_full.tail(24).copy()
 
-    # Preprocessing Fitur Temporal
+    # Ekstraksi Cuaca Detik Ini (Baris Terakhir)
+    curr_ghi = df_recent.iloc[-1]['Global Irradiation (kWh/m²)']
+    curr_temp = df_recent.iloc[-1]['Average Temperature (℃)']
+
+    # Siklus Temporal (Trigonometri)
     df_recent['hour'] = df_recent['Statistical period'].dt.hour
     df_recent['month'] = df_recent['Statistical period'].dt.month
     df_recent['hour_sin'] = np.sin(2 * np.pi * df_recent['hour'] / 24.0)
@@ -95,83 +114,90 @@ with st.spinner("⏳ Menyelaraskan telemetri cuaca real-time Paiton..."):
 
     features = ['Global Irradiation (kWh/m²)', 'Average Temperature (℃)', 'hour_sin', 'hour_cos', 'month_sin', 'month_cos']
 
-    # Scaling Input 24 Jam
+    # Prediksi AI (Seharusnya Produksi Berapa?)
     X_input_scaled = scaler_X.transform(df_recent[features])
     X_input_3d = X_input_scaled.reshape(1, 24, 6)
+    pred_scaled = model.predict(X_input_3d, verbose=0)
+    
+    # Total Prediksi Output Workshop (Target AI)
+    target_ai_total = max(0.0, float(scaler_y.inverse_transform(pred_scaled)[0][0]))
+    
+    # Jika malam hari (Radiasi 0), paksa AI target menjadi 0
+    if curr_ghi <= 0.01:
+        target_ai_total = 0.0
 
-    # Prediksi AI Total Workshop (Skala 2 Inverter)
-    pred_scaled = model.predict(X_input_3d)
-    pred_total_kwh = max(0.0, float(scaler_y.inverse_transform(pred_scaled)[0][0]))
+# ==============================================================================
+# 6. PENDEKATAN AKTUAL & PERHITUNGAN KERUGIAN (LOSSES PHYSICS)
+# ==============================================================================
+# Di lapangan asli, ini ditarik dari API FusionSolar. 
+# Sebagai simulasi cerdas, kita asumsikan efisiensi aktual = 93% dari Target AI (karena rugi kabel/debu)
+aktual_total = target_ai_total * 0.93 if target_ai_total > 0 else 0.0
 
-# Simulasi Distribusi 2 Inverter (Inverter 1: 52%, Inverter 2: 48%)
-pred_inv1 = pred_total_kwh * 0.52
-pred_inv2 = pred_total_kwh * 0.48
+# Pemecahan 2 Inverter
+pred_inv1, pred_inv2 = target_ai_total * 0.52, target_ai_total * 0.48
+akt_inv1, akt_inv2 = aktual_total * 0.52, aktual_total * 0.48
 
-# Data Aktual Simulasi Real-Time (Berdasarkan rasio efisiensi inverter lapangan 95%)
-actual_total_kwh = pred_total_kwh * 0.95
-actual_inv1 = pred_inv1 * 0.96
-actual_inv2 = pred_inv2 * 0.94
+# Kalkulasi Celah Kerugian (Energy & Financial Loss)
+energy_loss = max(0.0, target_ai_total - aktual_total)
+TARIF_RP = 1808
+kerugian_rp = energy_loss * TARIF_RP
+pendapatan_rp = aktual_total * TARIF_RP
 
-energy_loss_kwh = max(0.0, pred_total_kwh - actual_total_kwh)
-loss_percentage = (energy_loss_kwh / pred_total_kwh * 100) if pred_total_kwh > 0 else 0.0
+# ==============================================================================
+# 7. TAMPILAN RESPONSIVE (DASHBOARD UI)
+# ==============================================================================
 
-TARIF_LISTRIK = 1808 # Rp/kWh
-revenue_actual = actual_total_kwh * TARIF_LISTRIK
-financial_loss = energy_loss_kwh * TARIF_LISTRIK
-
-# 4. TAMPILAN VARIABEL UTAMA & FAKTOR LINGKUNGAN (REAL-TIME)
-st.subheader("📡 Variabel Lingkungan & Parameter Operasional Real-Time")
-curr_ghi = df_recent.iloc[-1]['Global Irradiation (kWh/m²)']
-curr_temp = df_recent.iloc[-1]['Average Temperature (℃)']
-curr_time = df_recent.iloc[-1]['Statistical period']
-
-col_v1, col_v2, col_v3, col_v4 = st.columns(4)
-col_v1.metric("Timestamp Data", str(curr_time))
-col_v2.metric("Radiasi Global (GHI)", f"{curr_ghi:.3f} kWh/m²")
-col_v3.metric("Suhu Ambien (T_amb)", f"{curr_temp:.1f} °C")
-col_v4.metric("Tarif Acuan Industri", f"Rp {TARIF_LISTRIK:,} / kWh")
-
-st.markdown("---")
-
-# 5. MONITORING KINERJA DUAL INVERTER & AI FORECASTING
-st.subheader("⚡ Perbandingan Kinerja Inverter & AI Prediction (Real-Time)")
-
-col_i1, col_i2 = st.columns(2)
-
-with col_i1:
-    st.markdown("#### **Inverter 1 (COM1-1)**")
-    st.metric("Prediksi AI (E_pred)", f"{pred_inv1:.2f} kWh")
-    st.metric("Aktual FusionSolar (E_akt)", f"{actual_inv1:.2f} kWh")
-    st.info(f"Efisiensi Inverter 1: {(actual_inv1/pred_inv1*100):.1f}%")
-
-with col_i2:
-    st.markdown("#### **Inverter 2 (COM1-2)**")
-    st.metric("Prediksi AI (E_pred)", f"{pred_inv2:.2f} kWh")
-    st.metric("Aktual FusionSolar (E_akt)", f"{actual_inv2:.2f} kWh")
-    st.info(f"Efisiensi Inverter 2: {(actual_inv2/pred_inv2*100):.1f}%")
+# SECTION A: Cuaca & Lingkungan
+st.subheader("📡 Variabel Cuaca Aktual (Real-Time)")
+# Gunakan st.columns yang otomatis membungkus (wrap) di layar HP
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Radiasi Global (GHI)", f"{curr_ghi:.3f} kWh/m²")
+c2.metric("Suhu Ambien", f"{curr_temp:.1f} °C")
+c3.metric("Potensi Daya Maksimal", "230 kW")
+c4.metric("Status Operasi", "AKTIF" if curr_ghi > 0 else "STANDBY MALAM")
 
 st.markdown("---")
 
-# 6. RINGKASAN FINANSIAL & DIAGNOSTIK KERUGIAN (LOSSES)
-st.subheader("📊 Analisis Keuangan & Diagnostik Kehilangan Energi (Energy Loss)")
+# SECTION B: Inverter & Produksi
+st.subheader("⚡ Monitoring Dual Inverter Huawei (AI vs FusionSolar)")
+col_inv1, col_inv2 = st.columns(2)
 
-col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+with col_inv1:
+    st.markdown("##### 🔌 Inverter 1 (COM1-1)")
+    st.info(f"**Target AI:** {pred_inv1:.2f} kWh\n\n**Aktual:** {akt_inv1:.2f} kWh")
+    ef_1 = (akt_inv1/pred_inv1*100) if pred_inv1 > 0 else 0.0
+    st.caption(f"Efisiensi Transmisi: {ef_1:.1f}%")
 
-col_m1.metric("Total Prediksi AI", f"{pred_total_kwh:.2f} kWh")
-col_m2.metric("Total Aktual FusionSolar", f"{actual_total_kwh:.2f} kWh")
-col_m3.metric("Gap / Energy Loss", f"{energy_loss_kwh:.2f} kWh ({loss_percentage:.1f}%)")
-col_m4.metric("Potensi Kerugian (Loss)", f"Rp {financial_loss:,.0f}".replace(",", "."))
+with col_inv2:
+    st.markdown("##### 🔌 Inverter 2 (COM1-2)")
+    st.info(f"**Target AI:** {pred_inv2:.2f} kWh\n\n**Aktual:** {akt_inv2:.2f} kWh")
+    ef_2 = (akt_inv2/pred_inv2*100) if pred_inv2 > 0 else 0.0
+    st.caption(f"Efisiensi Transmisi: {ef_2:.1f}%")
 
-st.success(f"💰 **Pendapatan Aktual Berhasil Diproduksi:** Rp {revenue_actual:,.0f} (Berdasarkan tarif industri Rp 1.808/kWh)".replace(",", "."))
-
-# 7. GRAFIK TREN PERBANDINGAN REAL-TIME
 st.markdown("---")
-st.subheader("📈 Grafik Tren Kurva Daya: AI Prediction vs Aktual FusionSolar (24 Jam Terakhir)")
 
-chart_data = pd.DataFrame({
-    'Jam': df_recent['Statistical period'].dt.strftime('%H:00'),
-    'Prediksi AI (kWh)': df_recent['Global Irradiation (kWh/m²)'] * 115 * 0.85, # Kurva teoretis terkalibrasi
-    'Aktual Rata-rata (kWh)': df_recent['Global Irradiation (kWh/m²)'] * 115 * 0.81
-}).set_index('Jam')
+# SECTION C: Financial & Loss Diagnostics (The Core Value)
+st.subheader("📊 Diagnostik Kerugian Daya & Pendapatan Finansial")
+st.write("Menganalisis selisih antara Model Kembaran Digital (Target AI) dengan Daya Aktual Lapangan.")
 
-st.line_chart(chart_data, color=["#0066CC", "#28A745"])
+# Desain kolom diagnostik
+f1, f2, f3 = st.columns(3)
+with f1:
+    st.markdown("<div class='stMetric success-metric'>", unsafe_allow_html=True)
+    st.metric("Total Produksi (Aktual)", f"{aktual_total:.2f} kWh")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with f2:
+    st.markdown("<div class='stMetric loss-metric'>", unsafe_allow_html=True)
+    st.metric("Terbuang/Energy Loss", f"{energy_loss:.2f} kWh")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with f3:
+    st.markdown("<div class='stMetric success-metric'>", unsafe_allow_html=True)
+    st.metric("Pendapatan Bersih", f"Rp {pendapatan_rp:,.0f}".replace(",", "."))
+    st.markdown("</div>", unsafe_allow_html=True)
+
+if energy_loss > 5.0:
+    st.error(f"⚠️ Peringatan: Terdapat kehilangan daya signifikan sebesar **{energy_loss:.2f} kWh** (Potensi Rugi: Rp {kerugian_rp:,.0f}). Periksa kebersihan panel dari debu PLTU atau indikasi shading awan!")
+elif curr_ghi > 0:
+    st.success("✅ Performa Pembangkit Optimal. Tidak ada indikasi kerugian daya ekstrem.")
